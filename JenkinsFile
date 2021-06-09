@@ -1,0 +1,271 @@
+import groovy.util.Node
+import groovy.json.JsonSlurper
+
+pipeline {
+    agent any
+
+    stages {
+        stage('Setup parameters') {
+            steps {
+                script {
+                    properties([
+                        parameters([
+                          string(
+                              defaultValue: '',
+                              description: 'AWS Account Number',
+                              name: 'AccountNumber',
+                              trim: true
+                          ),
+                           choice(
+                                defaultValue: 'eu-west-1',
+                                choices: ['eu-west-1', 'us-east-1'],
+                                name: 'RegionName',
+                                description: "Select AWS Region"
+                            ),
+                            choice(
+                                defaultValue: 'EXSBX',
+                                choices: ['EXSBX', 'EERSTD'],
+                                name: 'AccountType',
+                                description: "AccountType will be the type of the account name Ex: EXSBX"
+                            ),
+                            validatingString(
+                                defaultValue: '42',
+                                description: 'Please ensure the number must be two digits Ex: 01',
+                                failedValidationMessage: 'Please ensure the number must be two digits Ex: 01',
+                                name: 'num',
+                                regex: '^[01-99]{2}$'
+                            ),
+                            string(
+                                defaultValue: '',
+                                description: 'BillingContact details of which account to be deleted',
+                                name: 'BillingContact',
+                                trim: true
+                            ),
+                            string(
+                                defaultValue: '046376',
+                                description: 'ClarityID details of which account to be deleted',
+                                name: 'ClarityID',
+                                trim: true
+                            ),
+                            string(
+                                defaultValue: '',
+                                description: 'CostCenter details of which account to be deleted',
+                                name: 'CostCenter',
+                                trim: true
+                            ),
+                            string(
+                                defaultValue: 'TAD',
+                                description: 'Owner details of which account to be deleted',
+                                name: 'Owner',
+                                trim: true
+                            ),
+                            string(
+                                defaultValue: '',
+                                description: 'EmailAddress details of which account to be deleted',
+                                name: 'EmailAddress',
+                                trim: true
+                            ),
+                            string(
+                                defaultValue: '',
+                                description: 'ProjectName details of which account to be deleted',
+                                name: 'ProjectName',
+                                trim: true
+                            ),
+
+                            string(
+                                defaultValue: '',
+                                description: 'RITM details of which account to be deleted',
+                                name: 'RITM',
+                                trim: true
+                            )
+                        ])
+                    ])
+                }
+            }
+        }
+
+        stage('checkout code') {
+            steps {
+                cleanWs()
+                checkout scm
+            }
+        }
+
+        stage('Tag Comparison with Stack') {
+            steps {
+                script {
+                    sh '''
+                    #!/bin/bash
+                    set +x
+                    ## Assume role block end
+                    aws sts assume-role --role-arn arn:aws:iam::304512965277:role/RCC_AWS_AUTOTST_ADM --role-session-name Tempaccess --duration-second=3600 > sts.out
+
+                    AWS_ACCESS_KEY_ID=`cat sts.out | grep AccessKeyId | cut -d '"' -f4`
+                    AWS_SECRET_ACCESS_KEY=`cat sts.out | grep SecretAccessKey | cut -d '"' -f4`
+                    AWS_SESSION_TOKEN=`cat sts.out | grep SessionToken | cut -d '"' -f4`
+                    export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+                    export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+                    export AWS_SESSION_TOKEN=$AWS_SESSION_TOKEN
+
+                    aws sts assume-role --role-arn arn:aws:iam::304512965277:role/RRCC_AWS_EXSBX_ADM --role-session-name "$JOB_NAME"_BUILD_"$BUILD_NUMBER" --duration-second=3600 > sts.out
+
+                    AWS_ACCESS_KEY_ID="$(jq -r .Credentials.AccessKeyId < sts.out)"
+                    AWS_SECRET_ACCESS_KEY="$(jq -r .Credentials.SecretAccessKey < sts.out)"
+                    AWS_SESSION_TOKEN="$(jq -r .Credentials.SessionToken < sts.out)"
+                    export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+                    export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+                    export AWS_SESSION_TOKEN=$AWS_SESSION_TOKEN
+
+                    aws sts assume-role --role-arn arn:aws:iam::"$AccountNumber":role/RRCC_AWS_EXSBX_ADM --role-session-name "$JOB_NAME"_BUILD_"$BUILD_NUMBER" --duration-second=3600 > sts.out
+
+                    AWS_ACCESS_KEY_ID="$(jq -r .Credentials.AccessKeyId < sts.out)"
+                    AWS_SECRET_ACCESS_KEY="$(jq -r .Credentials.SecretAccessKey < sts.out)"
+                    AWS_SESSION_TOKEN="$(jq -r .Credentials.SessionToken < sts.out)"
+                    export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+                    export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+                    export AWS_SESSION_TOKEN=$AWS_SESSION_TOKEN
+
+                    aws sts get-caller-identity
+                    
+                    export PYTHONPATH="$WORKSPACE/lib"
+                
+                    #python3 exsbx/tag.py  -a "stacktags"
+
+                    '''
+                }
+            }
+        }
+        stage('Item Comparison with DynamoDB') {
+            steps {
+                script {
+                    sh '''
+                    #!/bin/bash
+                    set +x
+                    ## Assume role block end
+
+                    aws sts assume-role --role-arn arn:aws:iam::900804374729:role/RRCC_AWS_EC2INFRAJTST --role-session-name "$JOB_NAME"_BUILD_"$BUILD_NUMBER" --duration-second=3600 > sts.out
+
+                    AWS_ACCESS_KEY_ID="$(jq -r .Credentials.AccessKeyId < sts.out)"
+                    AWS_SECRET_ACCESS_KEY="$(jq -r .Credentials.SecretAccessKey < sts.out)"
+                    AWS_SESSION_TOKEN="$(jq -r .Credentials.SessionToken < sts.out)"
+                    export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+                    export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+                    export AWS_SESSION_TOKEN=$AWS_SESSION_TOKEN
+
+                    aws sts get-caller-identity
+
+                    pwd
+                    ls -l ${WORKSPACE}/lib/
+                    unzip -q ${WORKSPACE}/lib/python-lib.zip -d ${WORKSPACE}/lib/
+                    pwd
+                    export PYTHONPATH="$WORKSPACE/lib"
+                
+                    #python3 exsbx/tag.py  -a "dynamodbitems"
+
+                    
+                    '''
+                }
+            }
+        }
+
+        stage('Pipeline Decommission') {
+            steps {
+                script {
+                    sh '''
+                    #!/bin/bash
+                    set +x
+                    ## Assume role block end
+
+                    aws sts assume-role --role-arn arn:aws:iam::304512965277:role/RCC_AWS_AUTOTST_ADM --role-session-name Tempaccess --duration-second=3600 > sts.out
+
+                    AWS_ACCESS_KEY_ID=`cat sts.out | grep AccessKeyId | cut -d '"' -f4`
+                    AWS_SECRET_ACCESS_KEY=`cat sts.out | grep SecretAccessKey | cut -d '"' -f4`
+                    AWS_SESSION_TOKEN=`cat sts.out | grep SessionToken | cut -d '"' -f4`
+                    export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+                    export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+                    export AWS_SESSION_TOKEN=$AWS_SESSION_TOKEN
+
+                    aws sts assume-role --role-arn arn:aws:iam::304512965277:role/RRCC_AWS_EXSBX_ADM --role-session-name "$JOB_NAME"_BUILD_"$BUILD_NUMBER" --duration-second=3600 > sts.out
+
+                    AWS_ACCESS_KEY_ID="$(jq -r .Credentials.AccessKeyId < sts.out)"
+                    AWS_SECRET_ACCESS_KEY="$(jq -r .Credentials.SecretAccessKey < sts.out)"
+                    AWS_SESSION_TOKEN="$(jq -r .Credentials.SessionToken < sts.out)"
+                    export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+                    export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+                    export AWS_SESSION_TOKEN=$AWS_SESSION_TOKEN
+
+                    aws sts assume-role --role-arn arn:aws:iam::"$AccountNumber":role/RRCC_AWS_EXSBX_ADM --role-session-name "$JOB_NAME"_BUILD_"$BUILD_NUMBER" --duration-second=3600 > sts.out
+
+                    AWS_ACCESS_KEY_ID="$(jq -r .Credentials.AccessKeyId < sts.out)"
+                    AWS_SECRET_ACCESS_KEY="$(jq -r .Credentials.SecretAccessKey < sts.out)"
+                    AWS_SESSION_TOKEN="$(jq -r .Credentials.SessionToken < sts.out)"
+                    export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+                    export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+                    export AWS_SESSION_TOKEN=$AWS_SESSION_TOKEN
+
+                    aws sts get-caller-identity
+                    
+                    export PYTHONPATH="$WORKSPACE/lib"
+                
+                    python3 exsbx/pipeline_decommission.py  -a "delete"
+                    '''
+                }
+            }
+        }
+        stage('DMZ account stacks cleanup') {
+            steps {
+                script {
+                    sh '''
+                    #!/bin/bash
+                    set +x
+                    
+                    aws sts assume-role --role-arn arn:aws:iam::728756811910:role/RRCC_AWS_EC2INFRAJTST --role-session-name "$JOB_NAME"_BUILD_"$BUILD_NUMBER" --duration-second=3600 > sts.out
+
+                    AWS_ACCESS_KEY_ID="$(jq -r .Credentials.AccessKeyId < sts.out)"
+                    AWS_SECRET_ACCESS_KEY="$(jq -r .Credentials.SecretAccessKey < sts.out)"
+                    AWS_SESSION_TOKEN="$(jq -r .Credentials.SessionToken < sts.out)"
+                    export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+                    export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+                    export AWS_SESSION_TOKEN=$AWS_SESSION_TOKEN
+
+                    aws sts get-caller-identity
+                    export PYTHONPATH="$WORKSPACE/lib"
+                    #aws cloudformation describe-stack-events --region "eu-west-1" --stack-name "NVSGISDMZTST-EXSBX42-TGW-ASSOC-PROP-TST"
+                    python3 exsbx/dmz_stack_decommission.py
+                    '''
+                }
+            }
+        }
+        stage('Dynamo db Ipam table update') {
+            steps {
+                script {
+                    sh '''
+                    #!/bin/bash
+                    set +x
+                    
+                    aws sts assume-role --role-arn arn:aws:iam::900804374729:role/RRCC_AWS_EC2INFRAJTST --role-session-name "$JOB_NAME"_BUILD_"$BUILD_NUMBER" --duration-second=3600 > sts.out
+
+                    AWS_ACCESS_KEY_ID="$(jq -r .Credentials.AccessKeyId < sts.out)"
+                    AWS_SECRET_ACCESS_KEY="$(jq -r .Credentials.SecretAccessKey < sts.out)"
+                    AWS_SESSION_TOKEN="$(jq -r .Credentials.SessionToken < sts.out)"
+                    export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+                    export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+                    export AWS_SESSION_TOKEN=$AWS_SESSION_TOKEN
+
+                    aws sts get-caller-identity
+                    export PYTHONPATH="$WORKSPACE/lib"
+                    python3 exsbx/pipeline_decommission.py  -a "update"
+                    '''
+                }
+            }
+        }
+    }
+}
+
+def execSH(String command) {
+    def getAccount = sh (
+        script: command,
+        returnStdout: true
+    )
+    return readJSON(text: getAccount)
+}
